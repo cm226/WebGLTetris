@@ -1,0 +1,287 @@
+<html>
+
+<head>
+<title>Learning WebGL &mdash; lesson 1</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<script type="text/javascript" src="Debug/Debug.js"></script>
+
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.4/jquery.min.js"></script>
+
+<script type="text/javascript" src="glMatrix-0.9.5.min.js"></script>
+<script type="text/javascript" src="gl_utils.js"></script>
+<script type="text/javascript" src="webgl-utils.js"></script>
+<script type="text/javascript" src="Objects/Score.js"></script>
+<script type="text/javascript" src="Objects/Color_def.js"></script>
+<script type="text/javascript" src="Objects/block_offset.js"></script>
+<script type="text/javascript" src="Objects/Shapes/Shape.js"></script>
+<script type="text/javascript" src="Objects/Shapes/Ghost.js"></script>
+<script type="text/javascript" src="Objects/Projection.js"></script>
+<script type="text/javascript" src="Objects/Row.js"></script>
+<script type="text/javascript" src="Objects/Block.js"></script>
+<script type="text/javascript" src="Objects/Grid_config.js"></script>
+<script type="text/javascript" src="Objects/Grid.js"></script>
+<script type="text/javascript" src="Objects/Grid_positions.js"></script>
+<script type="text/javascript" src="Objects/Shape_list_display.js"></script>
+<script type="text/javascript" src="Controllers/ShapeList.js"></script>
+<script type="text/javascript" src="Controllers/GameLogic.js"></script>
+<script type="text/javascript" src="Drawables.js"></script>
+<script type="text/javascript" src="input/Keyboard.js"></script>
+<script type="text/javascript" src="block_lookup.js"></script>
+
+<script id="shader-fs" type="x-shader/x-fragment">
+    precision mediump float;
+
+  varying vec4 vColor;
+
+  varying vec2 vTextureCoord;
+  uniform sampler2D uSampler;
+  uniform vec4 uTint;
+
+  void main(void) {
+    gl_FragColor = (texture2D(uSampler, vec2(vTextureCoord.s, vTextureCoord.t)) * vColor) * uTint;
+  }
+</script>
+
+<script id="shader-vs" type="x-shader/x-vertex">
+  attribute vec4 aColor;
+  attribute vec3 aVertexPosition;
+  attribute vec2 aTextureCoord;
+
+  uniform mat4 uMVMatrix;
+  uniform mat4 uPMatrix;
+
+  varying vec2 vTextureCoord;
+  varying vec4 vColor;
+
+  void main(void) {
+    gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
+    vTextureCoord = aTextureCoord;
+    vColor = aColor;
+  }
+</script>
+
+
+<script type="text/javascript">
+
+    var Debug = new Debug(true);
+    var drawable_objects = new Drawables();
+    
+    var gridConfig = new Grid_config({x : 9, y : 20}, 
+                                     {x : 9, y : 20},
+                                     {x : -2, y : 0},
+                                      1.0);
+    var positionResolver = new Grid_positions(gridConfig);
+    var blocks = new Array();
+    var score = new Score([0,-1.3,0]);
+    var keyboard = new Keyboard();
+    var game_grid = new Grid(gridConfig);
+    var gameLogic = new GameLogic(game_grid, score);
+    var block_lookup = new Block_lookup(gridConfig);
+    var activeShape = null;
+    var projection = new projection(game_grid);
+
+    var gl;	
+    function initGL(canvas) {
+        try {
+            gl = canvas.getContext("experimental-webgl");
+            gl.viewportWidth = canvas.width;
+            gl.viewportHeight = canvas.height;
+        } catch (e) {
+        }
+        if (!gl) {
+            alert("Could not initialise WebGL, sorry :-(");
+        }
+    }
+
+
+    function initShaders() {
+        var fragmentShader = getShader(gl, "shader-fs");
+        var vertexShader = getShader(gl, "shader-vs");
+
+        shaderProgram = gl.createProgram();
+        gl.attachShader(shaderProgram, vertexShader);
+        gl.attachShader(shaderProgram, fragmentShader);
+        gl.linkProgram(shaderProgram);
+
+        if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+            alert("Could not initialise shaders");
+        }
+
+        gl.useProgram(shaderProgram);
+
+        shaderProgram.uColor = gl.getUniformLocation(shaderProgram, "aColor");
+        gl.enableVertexAttribArray(shaderProgram.uColor);
+
+        shaderProgram.vertexPositionAttribute = gl.getAttribLocation(shaderProgram, "aVertexPosition");
+        gl.enableVertexAttribArray(shaderProgram.vertexPositionAttribute);
+
+        shaderProgram.textureCoordAttribute = gl.getAttribLocation(shaderProgram, "aTextureCoord");
+        gl.enableVertexAttribArray(shaderProgram.textureCoordAttribute);
+
+
+        shaderProgram.pMatrixUniform = gl.getUniformLocation(shaderProgram, "uPMatrix");
+        shaderProgram.mvMatrixUniform = gl.getUniformLocation(shaderProgram, "uMVMatrix");
+
+
+        shaderProgram.samplerUniform = gl.getUniformLocation(shaderProgram, "uSampler");
+        shaderProgram.tintUniform = gl.getUniformLocation(shaderProgram, "uTint");
+    }
+
+    function initBuffers() {
+
+            Block.gl = gl;
+            Block.Position_resolver = positionResolver;
+            Block.init_buffers();
+
+            Score.initBuffers();
+    }
+
+    function initTexture()
+    {
+    	Block.initTexture();
+    	Score.initTexture();
+    }
+
+
+    function drawScene() {
+        gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+
+        gl.clearColor(0.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+
+        mat4.perspective(45, gl.viewportWidth / gl.viewportHeight, 0.1, 100.0, pMatrix);
+
+        mat4.identity(mvMatrix);
+
+        mat4.translate(mvMatrix, [-5.0, -10.0, -30.0]);
+
+        setMatrixUniforms();
+        
+        gl.uniform4fv(shaderProgram.tintUniform, [1.0, 1.0, 1.0, 1.0]);
+        
+	   drawable_objects.draw();
+
+    }
+
+
+    var LEFT_ARROW_CODE = 37
+    var UP_ARROW_CODE = 38
+    var RIGHT_ARROW_CODE = 39
+    var DOWN_ARROW_CODE = 40
+    var SPACE_CODE = 32
+    var CNTRL = 17
+
+    function handleKeyboard()
+    {
+        if(keyboard.is_key_down(RIGHT_ARROW_CODE))
+        {
+        	var delta = {x : 1, y : 0};
+            if (activeShape.move_delta(delta))
+            	projection.move_delta(delta)
+        }
+        else if (keyboard.is_key_down(LEFT_ARROW_CODE))
+        {
+        	var delta = {x : -1, y : 0};
+            if(activeShape.move_delta(delta))
+            	projection.move_delta(delta);
+        }
+        else if (keyboard.is_key_down(DOWN_ARROW_CODE))
+            activeShape.move_delta({x : 0, y : -1});
+        else if (keyboard.is_key_down(UP_ARROW_CODE))
+        {
+            if(activeShape.rotate_left())
+            	projection.rotate_left();
+            
+        }
+        else if (keyboard.is_key_down(SPACE_CODE) || 
+        		 keyboard.is_key_down(CNTRL))
+        {
+        	activeShape.fastDrop();
+        	forcedCycle = true;
+        }
+    }
+
+    
+    var lastTime = 0;
+    var cycle_timer = 0;
+    var CYCLE_DURATION = 800; // 2 seconds
+    var forcedCycle = false;
+
+    function update_delta_t()
+    {
+         var timeNow = new Date().getTime();
+        if (lastTime != 0) {
+            var elapsed = timeNow - lastTime;
+            cycle_timer += elapsed;
+            if (cycle_timer > CYCLE_DURATION || forcedCycle)
+            {
+            	console.log(cycle_timer);
+                cycle_timer = 0;
+                gameLogic.cycle();
+                forcedCycle = false;
+
+            }
+        }
+        lastTime = timeNow;
+    } 
+
+
+    function tick() {
+        update_delta_t();
+        requestAnimFrame(tick);
+        handleKeyboard();
+        drawScene();
+    }
+
+
+    function webGLStart() {
+        var canvas = document.getElementById("lesson01-canvas");
+        initGL(canvas);
+        initShaders();
+        initBuffers();
+        initTexture();
+
+        gl.clearColor(0.0, 0.0, 0.0, 1.0);
+        gl.enable(gl.DEPTH_TEST);
+
+        document.onkeydown = keyboard.onKeyDown;
+        document.onkeyup = keyboard.onKeyUp;
+
+        tick();
+        
+    }
+
+
+    // debug functions
+    function pg()
+    {
+        game_grid.print_grid();
+    }
+
+   window.onload = webGLStart;
+</script>
+
+
+</head>
+
+
+<body style="background-color:black;">
+
+<div id="canvas-container" style="width: 100%; text-align: center;">
+    <canvas id="lesson01-canvas" style="display:inline; border: solid; border-color: white; background-color: black;" width="350" height="500"></canvas>
+    <h3>Controls:</h3>
+    <div>
+    <ul style="color: white; text-align: left">
+    <li>Move Left/Right : left/right arrow keys</li>
+    <li>Move Down : down arrow key</li>
+    <li>Fast Drop : ctrl/space</li>
+    </ul>
+    <div>
+</div>
+
+
+</body>
+
+</html>
